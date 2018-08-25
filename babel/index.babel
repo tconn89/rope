@@ -1,0 +1,576 @@
+const { autoDetectRenderer, Graphics, Container, Texture, Point, mesh } = PIXI;
+
+// https://codepen.io/kynd/pen/pPGdqX
+
+/**/ /* ---- CORE ---- */
+/**/ const mainColor = '#0D0106';
+/**/ const secondaryColor = '0xFCFAF9';
+/**/ const bgColor = '0x2C2B3C';
+/**/ let windowWidth = window.innerWidth;
+/**/ let windowHeight = window.innerHeight;
+/**/ class Renderer {
+/**/   constructor(width, height) {
+/**/     this.renderableCount = 0;
+/**/     this.renderables = [];
+/**/     this.renderer = autoDetectRenderer(width, height, {
+/**/       antialias: true, resolution: 1, transparent: true,
+/**/     });
+/**/     this.dom = this.renderer.view;
+/**/     this.scene = new Container();
+/**/     this.animate = this.animate.bind(this);
+/**/     this.resizeHandler = this.resizeHandler.bind(this);
+/**/   }
+/**/   add(renderable) {
+/**/     this.scene.addChild(renderable);
+/**/     if (renderable.update) {
+/**/       this.renderableCount++;
+/**/       this.renderables.push(renderable);
+/**/     }
+/**/   }
+/**/   remove(renderable) {
+/**/     const idx = this.renderables.indexOf(renderable);
+/**/     if (idx < 0) {
+/**/       this.scene.removeChild(renderable);
+/**/       this.renderables.slice(idx, 1);
+/**/       this.renderableCount--;
+/**/     }
+/**/   }
+/**/   animate() {
+/**/     let i = this.renderableCount;
+/**/     while (--i >= 0) {
+/**/       this.renderables[i].update();
+/**/     }
+/**/     this.renderer.render(this.scene);
+/**/   }
+/**/   resizeHandler(w, h) {
+/**/     this.renderer.resize(w, h);
+/**/     let i = this.renderableCount;
+/**/     while (--i >= 0) {
+/**/       if (this.renderables[i].resize) this.renderables[i].resize();
+/**/     }
+/**/   }
+/**/ }
+/**/ const renderer = new Renderer(windowWidth, windowHeight);
+/**/ document.body.appendChild(renderer.dom);
+/**/
+/**/
+/* ---- CREATING ZONE ---- */
+
+// ############
+// PROPS
+// ############
+const NONE = 0;
+const DRAW = 1;
+const MOVE = 2;
+const props = {
+  GRAVITY_X: 0,
+  GRAVITY_Y: 5,
+  SPRING: 0.4,
+  TENTION: 1,
+  VEL: 0.75,
+  SEGMENT_LENGTH: 15,
+  ROPE_WIDTH: 10,
+  mouseEvent: NONE,
+  ropeOverred: false,
+};
+
+const gui = new dat.GUI();
+gui.close();
+gui.add(props, 'GRAVITY_X', 0, 20);
+gui.add(props, 'GRAVITY_Y', 0, 20);
+gui.add(props, 'SPRING', 0, 1.5);
+gui.add(props, 'TENTION', 0.2, 1);
+gui.add(props, 'VEL', 0, 1);
+gui.add(props, 'SEGMENT_LENGTH', 1, 100);
+
+
+// ############
+// UTILS
+// ############
+Math.sqr = x => x * x;
+const existingValueBy = (arr, comparator) =>
+  arr.filter(value => comparator(value))[0]
+;
+const radians = degrees => degrees * Math.PI / 180;
+const getDistBetweenTwoVec2 = (x1, y1, x2, y2) => {
+  const x = x1 - x2;
+  const y = y1 - y2;
+  const dist = Math.sqrt(Math.sqr(y) + Math.sqr(x));
+  return { x, y, dist };
+};
+const easing = (target, value, { vel = 0.03, update = f => f, callback = f => f } = {}) => {
+  const f = (target - value) * vel;
+  update(value + f, f);
+  if (Math.abs(f) < 0.001) {
+    update(target, f);
+    callback();
+  }
+};
+const canvasBuilder = (width = window.innerWidth, height = window.innerHeight) => {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d');
+  return {
+    canvas,
+    context,
+    getImageData: () => context.getImageData(0, 0, width, height).data,
+  };
+};
+const applyImageToCanvas = (image, w, h) => new Promise((resolve, reject) => {
+  const width = w || image.width;
+  const height = h || image.height;
+  const canvasB = canvasBuilder(width, height);
+  const { canvas, context } = canvasB;
+  context.drawImage(image, 0, 0, width, height);
+  resolve(canvas);
+});
+
+// ############
+// ROPE
+// ############
+const ropePattern = document.getElementById('ropePattern');
+// TODO use the good patterns :
+// - http://jeremieboulay.fr/assets/ropeBegin.png
+// - http://jeremieboulay.fr/assets/ropeEnd.png
+const ropeBegin = document.getElementById('ropePattern');
+const ropeEnd = document.getElementById('ropePattern');
+
+class Rope extends Container {
+  constructor(p1, p2, { color = 0xf4cd6a, textured = true } = {}) {
+    super();
+    if (!p1.x || !p1.y || !p2.x || !p2.y) {
+      console.warging('the two first parameters must be vector2');
+      return;
+    }
+
+    this.texture = null;
+    this.nbrOfNodes = 0;
+    this.points = [];
+    this.oldPoints = [];
+    this.attachedPoints = [];
+    this.count = 0;
+    this.interacitonDist = props.SEGMENT_LENGTH / 2;
+
+    // Normalize and place point to the line
+    // http://math.stackexchange.com/questions/175896/finding-a-point-along-a-line-a-certain-distance-away-from-another-point
+    const { dist } = getDistBetweenTwoVec2(p1.x, p1.y, p2.x, p2.y);
+    const u = {
+      x: (p1.x - p2.x) / dist,
+      y: (p1.y - p2.y) / dist,
+    };
+    let distToP1 = 0;
+    while (distToP1 < dist) {
+      this.addPoint(
+        p1.x - (distToP1 * u.x),
+        p1.y - (distToP1 * u.y),
+      );
+      distToP1 = this.nbrOfNodes * props.SEGMENT_LENGTH;
+    }
+    this.addPoint(p2.x, p2.y);
+
+    // DEBUG
+    if (textured) {
+      this.buildRopeTexture(() => {
+        this.rope = new mesh.Rope(this.texture, this.points);
+        this.rope.tint = color;
+        this.addChild(this.rope);
+      });
+    } else {
+      this.g = new Graphics();
+      this.addChild(this.g);
+    }
+
+    this.update = this.update.bind(this);
+    this.onCursorOver = this.onCursorOver.bind(this);
+    this.onCursorOut = this.onCursorOut.bind(this);
+    this.updateCursorPosition = this.updateCursorPosition.bind(this);
+  }
+
+  // INIT
+  addPoint(x, y) {
+    this.nbrOfNodes++;
+    this.points.push(new Point(x, y));
+    this.oldPoints.push(new Point(x, y));
+  }
+
+  buildRopeTexture(callback) {
+    let canvasRopePattern = null;
+    let canvasRopeBegin = null;
+    applyImageToCanvas(ropePattern, props.ROPE_WIDTH, props.ROPE_WIDTH).then(cRopePattern => {
+      canvasRopePattern = cRopePattern;
+      return applyImageToCanvas(ropeBegin, props.ROPE_WIDTH, props.ROPE_WIDTH);
+    }).then(cRopeBegin => {
+      canvasRopeBegin = cRopeBegin;
+      return applyImageToCanvas(ropeEnd, props.ROPE_WIDTH, props.ROPE_WIDTH);
+    }).then(cRopeEnd => {
+      // build rope
+      const ropeWidth = this.nbrOfNodes * props.SEGMENT_LENGTH;
+      const { canvas, context } = canvasBuilder(ropeWidth, props.ROPE_WIDTH);
+      const nbrOfRopePattern = (ropeWidth / canvasRopePattern.height) - 1;
+      context.drawImage(canvasRopeBegin, 0, 0);
+      for (let i = 1; i < nbrOfRopePattern; i++) {
+        context.drawImage(canvasRopePattern, i * props.ROPE_WIDTH, 0);
+      }
+      context.drawImage(cRopeEnd, ropeWidth - props.ROPE_WIDTH, 0);
+
+      this.texture = Texture.fromCanvas(canvas);
+      callback();
+    })
+    .catch(console.log);
+  }
+
+  // CORE
+  attachPoint(idx, x = 0, y = 0) {
+    let point = existingValueBy(this.attachedPoints, value => (value.idx === idx));
+    if (!point) {
+      point = { idx, x, y };
+      this.attachedPoints.push(point);
+    } else {
+      this.attachedPoints[this.attachedPoints.indexOf(point)] = { idx, x, y };
+    }
+    return point;
+  }
+
+  detachPoint(idx) {
+    const existingValue = existingValueBy(this.attachedPoints, value => (value.idx === idx));
+    if (existingValue) {
+      this.attachedPoints.splice(this.attachedPoints.indexOf(existingValue), 1);
+    } else {
+      console.log(`ERROR : The point ${idx} is not attached`);
+    }
+  }
+
+  pointIsAttached(idx) {
+    return this.attachedPoints.indexOf(idx) !== -1;
+  }
+
+  // LISTENERS
+  addListener() {
+    this.rope.interactive = true;
+    this.rope.on('pointerover', this.onCursorOver);
+    this.rope.on('pointerout', this.onCursorOut);
+  }
+
+  removeListener() {
+    if (this.rope) {
+      this.rope.interactive = false;
+      this.rope.off('pointerover', this.onCursorOver);
+      this.rope.off('pointerout', this.onCursorOut);
+      this.onCursorOut();
+    }
+  }
+
+  // MOUSE EFFECTS
+  onCursorOver() {
+    this.rope.on('mousemove', this.updateCursorPosition);
+    this.over = true;
+    props.ropeOverred = this;
+  }
+
+  onCursorOut() {
+    this.rope.off('mousemove', this.updateCursorPosition);
+    props.ropeOverred = false;
+    this.pointOverred = false;
+  }
+
+  updateCursorPosition(e) {
+    this.pointOverred = false;
+
+    let i = this.points.length - 1;
+    let positioned = false;
+
+    while (!positioned && i >= 0) {
+      const { dist } = getDistBetweenTwoVec2(
+        e.data.global.x,
+        e.data.global.y,
+        this.points[i].x,
+        this.points[i].y
+      );
+
+      if (dist < this.interacitonDist) {
+        positioned = true;
+        this.points[i].y -= 2;
+        this.points[i].x += 1;
+        this.pointOverred = i;
+      }
+      i--;
+    }
+  }
+
+  // RENDERING
+  // https://codepen.io/chribbe/pen/aHhdE?editors=0010
+  update() {
+    // gravity
+    for (let i = 1; i < this.nbrOfNodes; i++) {
+      this.points[i].x += props.GRAVITY_X;
+      this.points[i].y += props.GRAVITY_Y;
+    }
+
+    for (let i = 1; i < this.nbrOfNodes; i++) {
+      // friction
+      const oldP = {
+        x: this.points[i].x,
+        y: this.points[i].y,
+      };
+      this.points[i].x += (this.points[i].x - this.oldPoints[i].x) * props.VEL;
+      this.points[i].y += (this.points[i].y - this.oldPoints[i].y) * props.VEL;
+      this.oldPoints[i] = oldP;
+
+      // tention
+      const x = this.points[i].x - this.points[i - 1].x;
+      const y = this.points[i].y - this.points[i - 1].y;
+      const dist = Math.sqrt(Math.sqr(y) + Math.sqr(x));
+      const f = (dist - props.SEGMENT_LENGTH) * props.TENTION;
+      const fx = (x / dist) * f;
+      const fy = (y / dist) * f;
+      this.points[i].x -= fx;
+      this.points[i].y -= fy;
+      this.points[i - 1].x += fx * props.SPRING;
+      this.points[i - 1].y += fy * props.SPRING;
+    }
+
+    // UPDATE ATTACHED POINTS
+    for (let j = 0; j < this.attachedPoints.length; j++) {
+      const attachedPoint = this.attachedPoints[j];
+      this.points[attachedPoint.idx].x = attachedPoint.x;
+      this.points[attachedPoint.idx].y = attachedPoint.y;
+    }
+
+    if (this.g) this.renderPoints();
+  }
+
+  renderPoints() {
+    this.g.clear();
+    this.g.moveTo(this.points[0].x, this.points[0].y);
+    for (let i = 1; i < this.points.length; i++) {
+      this.g.beginFill(0xffffff, 0);
+      this.g.lineStyle(1, 0x48E5C2, 1);
+      this.g.lineTo(this.points[i].x, this.points[i].y);
+      this.g.endFill();
+    }
+  }
+}
+
+// ############
+// MARKER
+// ############
+class Marker extends Graphics {
+  constructor(x, y, size = 10) {
+    super();
+
+    this.position = { x, y };
+    this.rotation = Math.random() * 10;
+    this.size = size;
+
+    this.beginFill(0x2C2B3C, 0);
+    this.lineStyle(2, 0xFCFAF9);
+    this.circle = this.arc(0, 0, this.size, 0, radians(325));
+    this.endFill();
+
+    this.hide();
+  }
+
+  move(x, y) {
+    this.position = { x, y };
+  }
+
+  show(x, y, callback) {
+    this.position = { x, y };
+    this.animateScale(1, callback);
+  }
+
+  hide(callback) {
+    this.animateScale(0, callback);
+  }
+
+  animateScale(value, callback) {
+    this.isAnimated = true;
+    this.targetedScale = value;
+    this.animationCallback = callback;
+  }
+
+  update() {
+    this.rotation += 0.1;
+
+    // AnimateScale
+    if (this.isAnimated) {
+      easing(this.targetedScale, this.scale.x, {
+        vel: 0.2,
+        update: v => {
+          this.scale.x = this.scale.y = v;
+        },
+        callback: () => {
+          this.isAnimated = false;
+          if (this.animationCallback) this.animationCallback();
+        },
+      });
+    }
+  }
+}
+
+// ############
+// ROPE FABRIC
+// ############
+class RopeFabric {
+  constructor() {
+    this.ropes = [];
+    this.ropeAttachedToMouse = false;
+    this.pointAttachedToMouse = false;
+    this.mouseStartMarker = new Marker();
+    renderer.add(this.mouseStartMarker);
+    this.mouseEndMarker = new Marker();
+    renderer.add(this.mouseEndMarker);
+    this.line = new Graphics();
+    renderer.add(this.line);
+
+    this.onMouseMove = this.onMouseMove.bind(this);
+    this.onMouseDown = this.onMouseDown.bind(this);
+    this.onMouseUp = this.onMouseUp.bind(this);
+    this.drawConstructorLine = this.drawConstructorLine.bind(this);
+
+    renderer.dom.addEventListener('mousemove', this.onMouseMove);
+    renderer.dom.addEventListener('mousedown', this.onMouseDown);
+    renderer.dom.addEventListener('mouseup', this.onMouseUp);
+  }
+
+  // EVENTS
+  onMouseMove(e) {
+    switch (props.mouseEvent) {
+      case DRAW:
+        this.drawConstructorLine(
+          this.mouseStartMarker.position.x,
+          this.mouseStartMarker.position.y,
+          e.x, e.y,
+        );
+        break;
+      case MOVE:
+        this.pointAttachedToMouse.x = e.x;
+        this.pointAttachedToMouse.y = e.y;
+        break;
+      case NONE:
+        break;
+      default:
+        console.log('ERROR:onMouseMove');
+        break;
+    }
+  }
+
+  onMouseUp(e) {
+    console.log(this.mouseStartMarker)
+    switch (props.mouseEvent) {
+      case DRAW:
+        props.mouseEvent = NONE;
+        this.mouseStartMarker.hide();
+        this.mouseEndMarker.hide();
+        this.line.clear();
+
+        this.createRope(
+          { x: e.x, y: e.y },
+          this.mouseStartMarker.position,
+        );
+        break;
+      case MOVE:
+        break;
+      case NONE:
+        break;
+      default:
+        console.log('ERROR:onMouseUp');
+        break;
+    }
+  }
+
+  onMouseDown(e) {
+    switch (props.mouseEvent) {
+      case DRAW:
+        break;
+      case MOVE:
+        this.detachPointToMouse();
+        break;
+      case NONE:
+        props.mouseEvent = DRAW;
+        this.mouseStartMarker.show(e.x, e.y);
+        this.mouseEndMarker.show(e.x, e.y);
+        break;
+      default:
+        console.log('ERROR:onMouseDown');
+        break;
+    }
+  }
+
+  // GRAPHIC
+  createRope(p1, p2, ropeProps = {}) {
+    const { dist } = getDistBetweenTwoVec2(p1.x, p1.y, p2.x, p2.y);
+    if (dist > 30) {
+      const rope = new Rope(p1, p2, ropeProps);
+      this.ropes.push(rope);
+      renderer.add(rope);
+
+      this.attachRopeToMouse(rope, 0, p1.x, p1.y);
+    }
+  }
+
+  drawConstructorLine(x1, y1, x2, y2) {
+    this.line.clear();
+    this.line.beginFill(secondaryColor, 0);
+    this.line.lineStyle(2, secondaryColor);
+    this.line.moveTo(x1, y1);
+    this.line.lineTo(x2, y2);
+    this.line.endFill();
+    this.mouseEndMarker.move(x2, y2);
+  }
+
+  addMarker(x, y) {
+    const marker = new Marker(x, y);
+    renderer.add(marker);
+  }
+
+  // CORE
+  attachRopeToMouse(rope, pointIdx = -1, x, y) {
+    if (pointIdx === -1) {
+      console.log('ERROR : the point does not exist');
+      return;
+    }
+
+    if (rope.pointIsAttached(pointIdx)) {
+      rope.detachPoint(pointIdx);
+    } else {
+      props.mouseEvent = MOVE;
+      rope.removeListener();
+      this.pointAttachedToMouse = rope.attachPoint(pointIdx, x, y);
+      this.ropeAttachedToMouse = rope;
+    }
+  }
+
+  detachPointToMouse() {
+    props.mouseEvent = NONE;
+    this.ropeAttachedToMouse.addListener();
+    this.ropeAttachedToMouse = false;
+    this.pointAttachedToMouse = false;
+  }
+}
+
+// START
+const ropeFabric = new RopeFabric();
+ropeFabric.createRope(
+  { x: windowWidth * 0.5, y: 10 },
+  { x: 100, y: 50 }
+);
+
+/* ---- CREATING ZONE END ---- */
+/**/
+/**/
+/**/ /* ---- ON RESIZE ---- */
+/**/ function onResize() {
+/**/   windowWidth = window.innerWidth;
+/**/   windowHeight = window.innerHeight;
+/**/   renderer.resizeHandler(windowWidth, windowHeight);
+/**/ }
+/**/ window.addEventListener('resize', onResize);
+/**/ window.addEventListener('orientationchange', onResize);
+/**/ /* ---- LOOP ---- */
+/**/ function _loop() {
+/**/ 	 renderer.animate();
+/**/ 	 requestAnimationFrame(_loop);
+/**/ }
+/**/ _loop();
