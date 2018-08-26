@@ -7,6 +7,18 @@ html {
   margin: 0;
   font-family: Century Gothic, CenturyGothic, AppleGothic, sans-serif;
 }
+canvas {
+  z-index: 200;
+}
+.e {
+  position: fixed;
+  bottom: 30px;
+  right: 15px;
+  font-family: 'Arial';
+  font-size: 0.7rem;
+  color: #6e4523;
+  text-align: center;
+}
 .f {
   position: fixed;
   bottom: 5px;
@@ -16,7 +28,7 @@ html {
   color: #6e4523;
   text-align: center;
 }
-.f a {
+.e a, .f a {
   font-size: 0.8rem;
   color: #b76d68;
 }
@@ -25,10 +37,17 @@ html {
   color: #b76d68;
   text-transform: uppercase;
   text-align: center;
-  width: 100%;
+  margin-left: 10%;
+  width: 60%;
   bottom: 20%;
   pointer-events: none;
   opacity: 0.8;
+}
+#countdown {
+  position: absolute;
+  bottom: 38%;
+  color: white;
+  margin-left: 40%;
 }
 canvas {
   position: absolute;

@@ -566,7 +566,44 @@ setInterval(() => {
     demoRope.attachedPoints[0].x = demoRope.attachedPoints[0].x + 30;
   }, 200)
 }, 5000)
+
+  let countdown = document.getElementById('countdown')
+  let secondsLeft = 4
+let next =   () => {
+  countdown.textContent = secondsLeft
+  secondsLeft--
+  if(secondsLeft < 0) {
+    clearInterval(countDownTimer)
+    countdown.style.display = 'none'
+  }
+}
+let countDownTimer  = setInterval(
+  next, 1000)
 /* ---- CREATING ZONE END ---- */
+
+
+/* ---- NODE TWO CANVAS SYSTEM ---- */
+
+let nodeCanvas1 = n1 = document.getElementById('node1').getContext('2d');
+let nodeCanvas2 = n2 = document.getElementById('node2').getContext('2d');
+
+[n1, n2].map((node, i) => {
+  j = i + 1 
+  let elem = document.getElementById(`node${j}`)
+  elem.style.position = 'absolute'
+  elem.style.top = '38%'
+  elem.style.left = i === 1 ?'17%' : '52%'
+
+  node.moveTo(200 * 0.5 * j, 200 * 0.5)
+  node.beginPath();
+  // node.arc(200* 0.5, 200* 0.5, 18, 0, Math.PI*2);
+
+  node.lineWidth=5;
+  node.strokeStyle = '#6e4523'
+  node.stroke()
+  node.closePath();
+})
+
 /**/
 /**/
 /**/ /* ---- ON RESIZE ---- */
