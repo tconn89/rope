@@ -64,11 +64,11 @@ var DRAW = 1;
 var MOVE = 2;
 var props = {
   GRAVITY_X: 0,
-  GRAVITY_Y: 5,
-  SPRING: 0.4,
-  TENTION: 1,
-  VEL: 0.75,
-  SEGMENT_LENGTH: 15,
+  GRAVITY_Y: 0,
+  SPRING: 0.8,
+  TENTION: 0.5,
+  VEL: 0.95,
+  SEGMENT_LENGTH: 25,
   ROPE_WIDTH: 10,
   mouseEvent: NONE,
   ropeOverred: false };
@@ -222,14 +222,12 @@ Rope = function (_Container) {_inherits(Rope, _Container);
     }
 
     // CORE
-  }, { key: 'attachPoint', value: function attachPoint(idx) {var x = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : 0;var y = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : 0;
-      var point = existingValueBy(this.attachedPoints, function (value) {return value.idx === idx;});
-      if (!point) {
-        point = { idx: idx, x: x, y: y };
-        this.attachedPoints.push(point);
-      } else {
-        this.attachedPoints[this.attachedPoints.indexOf(point)] = { idx: idx, x: x, y: y };
-      }
+  }, { key: 'attachPoint', value: function attachPoint(idx) {
+      var x = arguments.length > 1 && arguments[1] !== undefined ?
+        arguments[1] : 0;
+      var y = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : 0;
+      point = { idx: idx, x: x, y: y };
+      this.attachedPoints.push(point);
       return point;
     } }, { key: 'detachPoint', value: function detachPoint(
 
@@ -538,7 +536,9 @@ var RopeFabric = function () {
       } else {
         props.mouseEvent = MOVE;
         rope.removeListener();
-        this.pointAttachedToMouse = rope.attachPoint(pointIdx, x, y);
+        console.log('IDX:', pointIdx)
+        rope.attachPoint(pointIdx, x, y);
+        rope.attachPoint(rope.points.length -1, windowWidth * 0.25, windowHeight * 0.5)
         this.ropeAttachedToMouse = rope;
       }
     } }, { key: 'detachPointToMouse', value: function detachPointToMouse()
@@ -554,10 +554,18 @@ var RopeFabric = function () {
 // START
 var ropeFabric = new RopeFabric();
 ropeFabric.createRope(
-{ x: windowWidth * 0.5, y: 10 },
-{ x: 100, y: 50 });
+{ x: windowWidth * 0.6, y: windowHeight * 0.5 },
+{ x: windowWidth * 0.35, y: windowHeight * 0.5 });
 
-
+let demoRope = ropeFabric.ropes[0]
+setInterval(() => {
+  demoRope.attachedPoints[0].y = demoRope.attachedPoints[0].y - 100;
+    demoRope.attachedPoints[0].x = demoRope.attachedPoints[0].x - 30;
+  setTimeout(() => {
+    demoRope.attachedPoints[0].y = demoRope.attachedPoints[0].y + 100;
+    demoRope.attachedPoints[0].x = demoRope.attachedPoints[0].x + 30;
+  }, 200)
+}, 5000)
 /* ---- CREATING ZONE END ---- */
 /**/
 /**/
